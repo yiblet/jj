@@ -2323,6 +2323,7 @@ impl TreeState {
             added_files: added_stats.added_files,
             removed_files: removed_stats.removed_files,
             skipped_files: added_stats.skipped_files,
+            lfs_missing_objects: added_stats.lfs_missing_objects,
         })
     }
 
@@ -2351,6 +2352,7 @@ impl TreeState {
             added_files: 0,
             removed_files: 0,
             skipped_files: 0,
+            lfs_missing_objects: 0,
         };
         let mut changed_file_states = Vec::new();
         let mut deleted_files = HashSet::new();
@@ -2519,6 +2521,7 @@ impl TreeState {
                                                 path = path.as_internal_file_string(),
                                                 "LFS object not in cache, writing pointer"
                                             );
+                                            stats.lfs_missing_objects += 1;
                                             Some(Box::new(std::io::Cursor::new(content))
                                                 as Box<dyn AsyncRead + Send + Unpin>)
                                         }
