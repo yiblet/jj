@@ -229,7 +229,8 @@ pub async fn cmd_git_fetch(
         tx.repo_mut(),
         git_settings.to_subprocess_options(),
         &import_options,
-    )?;
+    )?
+    .with_lfs(git_settings.lfs);
 
     let remote_names = matching_remotes
         .iter()

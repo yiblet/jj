@@ -35,6 +35,7 @@ either = { workspace = true }
 futures = { workspace = true }
 gix = { workspace = true, optional = true }
 gix-ignore = { workspace = true }
+gix-attributes = { workspace = true }
 globset = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
@@ -52,6 +53,7 @@ rayon = { workspace = true }
 ref-cast = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 smallvec = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
