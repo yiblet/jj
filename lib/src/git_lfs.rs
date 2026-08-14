@@ -146,14 +146,11 @@ pub fn write_lfs_object(git_dir: &Path, mut content: impl Read) -> io::Result<Lf
 /// Hex-encode helper (avoids pulling in the `hex` crate).
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .fold(String::new(), |mut s, b| {
-                use std::fmt::Write as _;
-                write!(s, "{b:02x}").unwrap();
-                s
-            })
+        bytes.as_ref().iter().fold(String::new(), |mut s, b| {
+            use std::fmt::Write as _;
+            write!(s, "{b:02x}").unwrap();
+            s
+        })
     }
 }
 
@@ -190,10 +187,12 @@ size 12345
         assert!(parse_lfs_pointer(b"not a pointer").is_none());
         assert!(parse_lfs_pointer(b"version https://git-lfs.github.com/spec/v1\n").is_none());
         // Wrong hash length
-        assert!(parse_lfs_pointer(
-            b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 10\n"
-        )
-        .is_none());
+        assert!(
+            parse_lfs_pointer(
+                b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 10\n"
+            )
+            .is_none()
+        );
         // Non-hex characters
         assert!(parse_lfs_pointer(
             b"version https://git-lfs.github.com/spec/v1\noid sha256:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\nsize 10\n"

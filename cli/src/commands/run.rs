@@ -106,6 +106,8 @@ fn default_tree_state_settings() -> TreeStateSettings {
         eol_conversion_mode: EolConversionMode::None,
         exec_change_setting: ExecChangeSetting::Auto,
         fsmonitor_settings: FsmonitorSettings::None,
+        ignore_filters: HashSet::new(),
+        lfs_enabled: false,
     }
 }
 
