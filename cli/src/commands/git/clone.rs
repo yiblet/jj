@@ -389,7 +389,8 @@ async fn fetch_new_remote(
     let should_track_default = settings.get_bool("git.track-default-bookmark-on-clone")?;
     let mut tx = workspace_command.start_transaction();
     let (default_branch, import_stats) = {
-        let mut git_fetch = GitFetch::new(tx.repo_mut(), subprocess_options, &import_options)?.with_lfs(git_settings.lfs);
+        let mut git_fetch = GitFetch::new(tx.repo_mut(), subprocess_options, &import_options)?
+            .with_lfs(git_settings.lfs);
         git_fetch.fetch(remote_name, ref_expr, &mut GitSubprocessUi::new(ui), depth)?;
         let import_stats = git_fetch.import_refs().await?;
 

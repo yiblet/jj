@@ -21,18 +21,19 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
+use futures::AsyncRead;
+use futures::AsyncReadExt as _;
+use futures::io::AllowStdIo;
 use gix_attributes::Search;
 use gix_attributes::State;
 use gix_attributes::glob::pattern::Case;
 use gix_attributes::search::MetadataCollection;
 use gix_attributes::search::Outcome;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt as _;
-use tokio::sync::OnceCell;
 
+use crate::backend::MergedTreeValueExt as _;
 use crate::backend::TreeValue;
-use crate::file_util::BlockingAsyncReader;
 use crate::merge::SameChange;
 use crate::merged_tree::MergedTree;
 use crate::repo_path::RepoPath;
@@ -169,7 +170,7 @@ impl FileLoader for DiskFileLoader {
                 });
             }
         };
-        Ok(Some(Box::new(BlockingAsyncReader::new(file))))
+        Ok(Some(Box::new(AllowStdIo::new(file))))
     }
 }
 
@@ -179,8 +180,8 @@ struct SearchAndCollection {
 }
 
 struct GitAttributesNode {
-    disk_first: OnceCell<Arc<SearchAndCollection>>,
-    store_first: OnceCell<Arc<SearchAndCollection>>,
+    disk_first: OnceLock<Arc<SearchAndCollection>>,
+    store_first: OnceLock<Arc<SearchAndCollection>>,
     disk_file_loader: Arc<dyn FileLoader>,
     store_file_loader: Arc<dyn FileLoader>,
     parent: Option<Arc<Self>>,
@@ -195,7 +196,7 @@ impl GitAttributesNode {
         self.primary_then_secondary(SearchPriority::Store).await
     }
 
-    fn store(&self, priority: SearchPriority) -> &OnceCell<Arc<SearchAndCollection>> {
+    fn store(&self, priority: SearchPriority) -> &OnceLock<Arc<SearchAndCollection>> {
         match priority {
             SearchPriority::Store => &self.store_first,
             SearchPriority::Disk => &self.disk_first,
@@ -220,63 +221,79 @@ impl GitAttributesNode {
         &self,
         priority: SearchPriority,
     ) -> Result<Arc<SearchAndCollection>, GitAttributesError> {
-        self.store(priority)
-            .get_or_try_init(async || {
-                let parent_metadata = match &self.parent {
-                    // we use pin because this is a recursive call
-                    Some(parent) => Box::pin(parent.primary_then_secondary(priority)).await?,
-                    None => {
-                        let mut search = Search::default();
-                        let mut collection = MetadataCollection::default();
-                        // initialize search
-                        search.add_patterns_buffer(
+        if let Some(value) = self.store(priority).get() {
+            return Ok(value.clone());
+        }
+        let value = self.compute(priority).await?;
+        Ok(self.store(priority).get_or_init(|| value).clone())
+    }
+
+    async fn compute(
+        &self,
+        priority: SearchPriority,
+    ) -> Result<Arc<SearchAndCollection>, GitAttributesError> {
+        {
+            let parent_metadata = match &self.parent {
+                // we use pin because this is a recursive call
+                Some(parent) => Box::pin(parent.primary_then_secondary(priority)).await?,
+                None => {
+                    let mut search = Search::default();
+                    let mut collection = MetadataCollection::default();
+                    // initialize search
+                    search
+                        .add_patterns_buffer(
                             b"[attr]binary -diff -merge -text",
                             "[builtin]".into(),
                             None,
                             &mut collection,
                             true, /* allow macros */
-                        );
-                        Arc::new(SearchAndCollection { search, collection })
-                    }
-                };
-                let git_attributes_path =
-                    self.path
-                        .join(RepoPathComponent::new(".gitattributes").map_err(|err| {
-                            GitAttributesError {
-                                message: "Could not join path with .gitattributes".to_string(),
-                                source: err.into(),
-                            }
-                        })?);
-                let mut async_reader = match self
-                    .primary_loader(priority)
-                    .load(&git_attributes_path)
-                    .await?
-                {
-                    Some(reader) => reader,
-                    None => {
-                        // fallback to the secondary loader
-                        match self
-                            .secondary_loader(priority)
-                            .load(&git_attributes_path)
-                            .await?
-                        {
-                            Some(reader) => reader,
-                            None => return Ok(parent_metadata),
+                        )
+                        .map_err(|err| GitAttributesError {
+                            message: "Could not parse builtin attributes".into(),
+                            source: err.into(),
+                        })?;
+                    Arc::new(SearchAndCollection { search, collection })
+                }
+            };
+            let git_attributes_path =
+                self.path
+                    .join(RepoPathComponent::new(".gitattributes").map_err(|err| {
+                        GitAttributesError {
+                            message: "Could not join path with .gitattributes".to_string(),
+                            source: err.into(),
                         }
+                    })?);
+            let mut async_reader = match self
+                .primary_loader(priority)
+                .load(&git_attributes_path)
+                .await?
+            {
+                Some(reader) => reader,
+                None => {
+                    // fallback to the secondary loader
+                    match self
+                        .secondary_loader(priority)
+                        .load(&git_attributes_path)
+                        .await?
+                    {
+                        Some(reader) => reader,
+                        None => return Ok(parent_metadata),
                     }
-                };
-                let mut bytes = Vec::new();
-                async_reader
-                    .read_to_end(&mut bytes)
-                    .await
-                    .map_err(|err| GitAttributesError {
-                        source: err.into(),
-                        message: "Could not read .gitattributes file".into(),
-                    })?;
-                let mut search = parent_metadata.search.clone();
-                let mut collection = parent_metadata.collection.clone();
+                }
+            };
+            let mut bytes = Vec::new();
+            async_reader
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|err| GitAttributesError {
+                    source: err.into(),
+                    message: "Could not read .gitattributes file".into(),
+                })?;
+            let mut search = parent_metadata.search.clone();
+            let mut collection = parent_metadata.collection.clone();
 
-                search.add_patterns_buffer(
+            search
+                .add_patterns_buffer(
                     &bytes,
                     git_attributes_path
                         .to_fs_path(&PathBuf::new())
@@ -290,12 +307,14 @@ impl GitAttributesNode {
                     // Macros can only be defined in top-level gitattributes:
                     // https://git-scm.com/docs/gitattributes#_defining_macro_attributes
                     self.parent.is_none(), /* allow macros */
-                );
+                )
+                .map_err(|err| GitAttributesError {
+                    message: "Could not parse .gitattributes file".into(),
+                    source: err.into(),
+                })?;
 
-                Ok(Arc::new(SearchAndCollection { search, collection }))
-            })
-            .await
-            .cloned()
+            Ok(Arc::new(SearchAndCollection { search, collection }))
+        }
     }
 }
 
@@ -378,8 +397,8 @@ impl GitAttributes {
         }
         let parent = path.parent().map(|parent| self.inner(map, parent));
         let new_node = Arc::new(GitAttributesNode {
-            disk_first: OnceCell::new(),
-            store_first: OnceCell::new(),
+            disk_first: OnceLock::new(),
+            store_first: OnceLock::new(),
             disk_file_loader: self.disk_file_loader.clone(),
             store_file_loader: self.store_file_loader.clone(),
             parent,
@@ -426,8 +445,7 @@ pub struct GitAttributesError {
 #[cfg(test)]
 mod tests {
 
-    use std::io::Cursor;
-
+    use futures::io::Cursor;
     use gix_attributes::state::Value;
     use indoc::indoc;
     use pollster::FutureExt as _;

@@ -64,7 +64,7 @@ gix = { version = "0.89.0", default-features = false, features = [
     "sha1",
     "sha256",
 ] }
-gix-attributes = "0.34.0"
+gix-attributes = "0.37.0"
 gix-ignore = { version = "0.24.0" }
 globset = "0.4.18"
 hashbrown = { version = "0.17.1", default-features = false, features = ["inline-more"] }

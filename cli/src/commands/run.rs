@@ -202,6 +202,8 @@ impl WorkspacePool {
                 eol_conversion_mode: EolConversionMode::None,
                 exec_change_setting: ExecChangeSetting::Auto,
                 fsmonitor_settings: FsmonitorSettings::None,
+                ignore_filters: Default::default(),
+                lfs_enabled: false,
             },
         })
     }

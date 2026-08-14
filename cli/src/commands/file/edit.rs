@@ -121,6 +121,8 @@ pub(crate) async fn cmd_file_edit(
         eol_conversion_mode: EolConversionMode::None,
         exec_change_setting: ExecChangeSetting::Auto,
         fsmonitor_settings: FsmonitorSettings::None,
+        ignore_filters: Default::default(),
+        lfs_enabled: false,
     };
     let mut tree_state = TreeState::init(
         repo.store().clone(),
